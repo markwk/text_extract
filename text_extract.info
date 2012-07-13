@@ -1,0 +1,5 @@
+; $Id$
+name = Text Extract
+description = "Used to extract text from attached files and place it within the node body on saving the node"
+core = 6.x
+package = EXTRACT
