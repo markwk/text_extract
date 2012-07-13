@@ -1,5 +1,6 @@
-; $Id$
 name = Text Extract
 description = "Used to extract text from attached files and place it within the node body on saving the node"
-core = 6.x
-package = EXTRACT
+core = 7.x
+package = other
+files[] = text_extract.module
+files[] = text_extract.admin.inc

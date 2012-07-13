@@ -1,142 +1,156 @@
 <?php
 
 /**
- * Implementation of hook_menu().
+ * Implements hook_menu().
  */
 function text_extract_menu() {
-  $items['admin/settings/text-extract-settings'] = array(
-      'title'            => 'Text Extraction Settings',
-      'description'      => 'Settings to extract text',
-      'page callback'    => 'drupal_get_form',
-      'page arguments'   => array('text_extraction_form_settings'),
-      'access arguments' => array('administer site configuration'),
-      'type'             => MENU_NORMAL_ITEM,
-      'file'             => 'text_extract.admin.inc',
+  $items['admin/config/content/text-extract-settings'] = array(
+    'title' => 'Text Extraction Settings',
+    'description' => 'Settings to extract text',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('text_extraction_form_settings'),
+    'access arguments' => array('administer site configuration'),
+    'type' => MENU_NORMAL_ITEM,
+    'file' => 'text_extract.admin.inc',
   );
   $items['extract-status'] = array(
-      'title'            => 'Extraction Status for content type Upload',
-      'description'      => 'Status of the nodes',
-      'page callback'    => 'extract_status',
-      'access arguments' => array('administer nodes'),
-      'type'             => MENU_NORMAL_ITEM,
+    'title' => 'Extraction Status for content type Upload',
+    'description' => 'Status of the nodes',
+    'page callback' => 'extract_status',
+    'access arguments' => array('administer nodes'),
+    'type' => MENU_NORMAL_ITEM,
   );
   $items['extract-now/%'] = array(
-      'title'            => 'Extract text',
-      'page callback'    => 'extract_now',
-      'page arguments'   => array(1),
-      'access arguments' => array('administer nodes'),
-      'type'             => MENU_CALLBACK,
+    'title' => 'Extract text',
+    'page callback' => 'extract_now',
+    'page arguments' => array(1),
+    'access arguments' => array('administer nodes'),
+    'type' => MENU_CALLBACK,
   );
   return $items;
-  }
+}
 
 /**
- * Implementation of hook_cron
+ * Implements hook_cron().
  *
  */
 function text_extract_cron() {
-
   $ext_during_cron = variable_get('extract_during_cron', FALSE);
   if ($ext_during_cron == 1) {
     //get the content types to extract
-    $con_type = variable_get('extract_content_type', FALSE);
+    $con_type = variable_get('extract_content_type', array());
     $limit = variable_get('extract_content_number', FALSE);
-     $query_upload = db_query("SELECT a.nid, a.field_status_value, b.field_file_upload_fid FROM {content_type_upload} a INNER JOIN {content_field_file_upload} b ON a.nid = b.nid WHERE ((a.field_status_value=0 OR a.field_status_value IS NULL) AND b.field_file_upload_fid IS NOT NULL) LIMIT $limit");
-
-    if (in_array('upload', $con_type) && $query_upload) {
-      $node = _extract_content($query_upload);
+    $query1 = db_query("SELECT a.nid, a.field_status_value, b.field_file_upload_fid FROM {content_type_upload} a INNER JOIN {content_field_file_upload} b ON a.nid = b.nid WHERE ((a.field_status_value=0 OR a.field_status_value IS NULL) AND b.field_file_upload_fid IS NOT NULL) LIMIT 0, :limit", array(':limit' => $limit));
+    if (in_array('upload', $con_type) && $query1) {
+      $node = _extract_content($query1);
+    }
+    $query2 = db_query("SELECT s.entity_id as nid FROM {field_data_field_file_upload} u INNER JOIN {field_data_field_status} s ON s.entity_id = u.entity_id WHERE ((s.field_status_value=0 OR s.field_status_value IS NULL) AND u.field_file_upload_fid IS NOT NULL) AND s.bundle='upload' LIMIT 0, :limit", array(':limit' => $limit));
+    if (in_array('upload', $con_type) && $query2) {
+      $node = _extract_content($query2);
     }
   }
 }
 
 /**
- * helper function to extract content
+ * Helper function to extract content
  *
+ * @param $result
+ *   Query result to extract.
  */
-function _extract_content($query) {
-  while ($data = db_fetch_array($query)) {
-      $node = node_load($data['nid']);
-      if ($node->field_file_upload) {
-	//$node->format = '2';
-	$node->body .= "<br/>";
-	$node->body .= "<br/>";
-	$node->body .= "<b>Text automatically extracted from attachment below. Please download attachment to view properly formatted document.</b>";
-	$node->body .= "<br/>";
-	$node->body .= "<br/>";
-	foreach($node->field_file_upload as $key->value) {
-	  $file_explode = explode('files/', $key->value['filepath']);
-	  $file = $file_explode[1];
-	  $filepath = $_SERVER['DOCUMENT_ROOT'] . base_path() . file_directory_path() . DIRECTORY_SEPARATOR . $file;
-	  $filepath = str_replace(" ", "\ ", $filepath);
-	  $node->body .= "---Extracted text from " . $file . "---";
-	  $node->body .= "<br/>";
-	  //path to tika to be changed on stage and production server
-	  $node->body .= shell_exec('java -jar /usr/java/jre1.7.0_02/lib/tika-app-1.0.jar -t ' . $filepath);
-	  $node->body .= "<br/>";
-	  $node->field_status[0]['value'] = 1;
-	  node_save($node);	      
+function _extract_content($result) {
+  foreach ($result as $record) {
+    $node = node_load($record->nid);
+	if ($node->field_file_upload['und'][0]) {
+	  $body .= "<br/>";
+	  $body .= "<br/>";
+	  $body .= variable_get('extract_content_htmlbefore', '<b>Text automatically extracted from attachment below. Please download attachment to view properly formatted document.</b>');
+	  $body .= "<br/>";
+	  $body .= "<br/>";
+	  foreach ($node->field_file_upload['und'] as $key => $value) {
+		$uploaded_file = file_load($value['fid']);
+		$file = file_create_url($uploaded_file->uri);
+	    $file_explode = explode('files/', $file);
+	    $file = $file_explode[1];
+	    $files_dir = file_stream_wrapper_get_instance_by_uri('public://')->getDirectoryPath();
+	    $filepath = $_SERVER['DOCUMENT_ROOT'] . base_path() . $files_dir . DIRECTORY_SEPARATOR . $file;
+	    $filepath = str_replace(" ", "\ ", $filepath);
+	    $body .= "---Extracted text from " . $file . "---";
+	    $body .= "<br/>";
+	    $body .= shell_exec(variable_get('extract_content_location', 'java -jar /Library/Java/Extensions/tika-app-1.0.jar  -t') . ' ' . $filepath);
+	    $body .= "<br/>";
+	    $body .= variable_get('extract_content_htmlafter', '');
+	    $node->body['und'][0]['value'] = $body;
+	    $node->body['und'][0]['summary'] = $body;
+	    $node->body['und'][0]['format'] = 2;
+	    $node->field_status['und'][0]['value'] = 1;
+	    $node->field_ext_save['und'][0]['value'] = 0;
+	  }
+	  node_save($node);
 	}
-      }
   }
 }
-
 /**
- * Implementation of hook_nodeapi
- *
+ *  
+ * Implements hook_node_presave().
+ * @param $node
+ *   The node that is being saved.
  */
-function text_extract_nodeapi(&$node, $op, $a3 = NULL, $a4 = NULL) {
-  switch($op) {
-  case 'presave':
-
-     if ($node->type == 'upload' && $node->field_ext_save[0]['value'] == 1 && $node->field_file_upload[0]['fid']) {
-	$image_exists = FALSE;
-	$text_file_exists = FALSE;
-        foreach($node->field_file_upload as $key->value) {
-	$file_explode = explode('files/', $key->value['filepath']);
-	$file = $file_explode[1];
-	if (check_if_image($file)) {
-	      $image_exists = TRUE;
-	}
-	else {
-	      $text_file_exists = TRUE;
-	}
+function text_extract_node_presave($node) {
+  if ($node->type == 'upload' && $node->field_ext_save['und'][0]['value'] == 1 && $node->field_file_upload['und'][0]['fid']) {
+    $image_exists = FALSE;
+    $text_file_exists = FALSE;
+    foreach ($node->field_file_upload['und'] as $key => $value) {
+	  $uploaded_file = file_load($value['fid']);
+	  $file = file_create_url($uploaded_file->uri);
+      $file_explode = explode('files/', $file);
+      $file = $file_explode[1];
+      if (check_if_image($file)) {
+        $image_exists = TRUE;
       }
-
-	  if ($text_file_exists) {
-	    //$node->format = '2';
-	    $node->body .= "<br/>";
-	    $node->body .= "<br/>";
-	    $node->body .= "<b>Text automatically extracted from attachment below. Please download attachment to view properly formatted document.</b>";
-	    $node->body .= "<br/>";
-	    $node->body .= "<br/>";
-	  }
-
-          foreach($node->field_file_upload as $key->value) {
-            $file_explode = explode('files/', $key->value['filepath']);
-            $file = $file_explode[1];
-
-	    if(!(check_if_image($file))) { 
-	      $filepath = $_SERVER['DOCUMENT_ROOT'] . base_path() . file_directory_path() . DIRECTORY_SEPARATOR . $file;
-	      $filepath = str_replace(" ", "\ ", $filepath);
-	      $node->body .= "---Extracted text from " . $file . "---";
-	      $node->body .= "<br/>";
-	      //path to tika to be changed on stage and production server
-	      $node->body .= shell_exec('java -jar /usr/java/jre1.7.0_02/lib/tika-app-1.0.jar -t ' . $filepath);
-	      $node->body .= "<br/>";
-	      $node->body .= "<br/>";
-
-	    }
-	  }
-          $node->field_status[0]['value'] = 1;
-	  $node->field_ext_save[0]['value'] = 0;
-	}
-	break;
+      else {
+        $text_file_exists = TRUE;
+      }
     }
+
+    if ($text_file_exists) {
+      //$node->format = '2';
+      $body .= "<br/>";
+      $body .= "<br/>";
+      $body .= variable_get('extract_content_htmlbefore', '<b>Text automatically extracted from attachment below. Please download attachment to view properly formatted document.</b>');
+      $body .= "<br/>";
+      $body .= "<br/>";
+    }
+
+    foreach ($node->field_file_upload['und'] as $key => $value) {
+	  $uploaded_file = file_load($value['fid']);
+	  $file = file_create_url($uploaded_file->uri);
+      $file_explode = explode('files/', $file);
+      $file = $file_explode[1];
+
+      if (!(check_if_image($file))) {
+	    $files_dir = file_stream_wrapper_get_instance_by_uri('public://')->getDirectoryPath();
+        $filepath = $_SERVER['DOCUMENT_ROOT'] . base_path() . $files_dir . DIRECTORY_SEPARATOR . $file;
+        $filepath = str_replace(" ", "\ ", $filepath);
+        $body .= "---Extracted text from " . $file . "---";
+        $body .= "<br/>";
+        $body .= shell_exec(variable_get('extract_content_location', 'java -jar /Library/Java/Extensions/tika-app-1.0.jar  -t') . ' ' . $filepath);
+        $body .= "<br/>";
+        $body .= variable_get('extract_content_htmlafter', '');  
+        $body .= "<br/>";
+        $node->body['und'][0]['value'] = $body;
+        $node->body['und'][0]['summary'] = $body;
+        $node->body['und'][0]['format'] = 2;
+      }
+    }
+    $node->field_status['und'][0]['value'] = 1;
+    $node->field_ext_save['und'][0]['value'] = 0;
+  }
 }
 
 /**
  * Function to check of the uploaded file is an image
- *
+ * @param $file
+ *   file to check if its image.
  */
 function check_if_image($file) {
   $pattern1 = '/.png/';
@@ -147,10 +161,10 @@ function check_if_image($file) {
   preg_match($pattern2, $file, $matches2);
   preg_match($pattern3, $file, $matches3);
   preg_match($pattern4, $file, $matches4);
-if ($matches1 || $matches2 || $matches3 || $matches4) {
+  if ($matches1 || $matches2 || $matches3 || $matches4) {
     return TRUE;
   }
-  else{
+  else {
     return FALSE;
   }
 }
@@ -160,59 +174,79 @@ if ($matches1 || $matches2 || $matches3 || $matches4) {
  *
  */
 function extract_status() {
-
+  $info = array();
+  $output = '';
   $header = array('Node Title', 'Extract Status', 'Operation', 'Extract?');
-  $query = db_query("SELECT ctu.nid, ctu.field_status_value, n.title FROM {content_type_upload} ctu, {node} n WHERE n.nid = ctu.nid");
-  
-  while($data = db_fetch_array($query)) {
-    $info[$data['nid']]['nodeid'] = l($data['title'], 'node/' . $data['nid']);
-    if ($data['field_status_value'] == 1) {
-      $info[$data['nid']]['status'] = 'Extracted';
-    }
-    else {
-      $info[$data['nid']]['status'] = 'Not Extracted';
-    }
-    $info[$data['nid']]['operation'] = l('edit', 'node/' . $data['nid'] . '/edit');
-    if ($data['field_status_value'] == 0) {
-      $info[$data['nid']]['extract'] = l('Extract Now!', 'extract-now/' . $data['nid']);
-    }
-    else {
-      $info[$data['nid']]['extract'] = "N/A";
-    }
-  }
-  
+  $result1 = db_query("SELECT ctu.nid, ctu.field_status_value, n.title FROM {content_type_upload} ctu inner join {node} n on n.nid = ctu.nid");
+  $info = text_extract_fetch($result1);
+  $result2 = db_query("SELECT cts.entity_id as nid, cts.field_status_value, n.title FROM {field_data_field_status} cts inner join {node} n on n.nid = cts.entity_id where bundle='upload'");
+  $info += text_extract_fetch($result2);
+
   $attributes = array(
-        'class' => 'extract-table',
+    'class' => array('extract-table'),
   );
-  $output = theme_table($header, $info, $attributes);
+  $output = theme('table', array('header' => $header, 'rows' => $info, 'attributes' => $attributes)); 
   return $output;
+}
+/**
+ * Fetch Query Records
+ * @result
+ *  query resource to fetch
+ */
+function text_extract_fetch($result) {
+  $info = array();
+  foreach ($result as $record) {
+    $info[$record->nid]['nodeid'] = l($record->title, 'node/' . $record->nid);
+	if ($record->field_status_value == 1) {
+	  $info[$record->nid]['status'] = 'Extracted';
+	}
+	else {
+	  $info[$record->nid]['status'] = 'Not Extracted';
+	}
+	$info[$record->nid]['operation'] = l('edit', 'node/' . $record->nid . '/edit');
+	if ($record->field_status_value == 0) {
+	  $info[$record->nid]['extract'] = l('Extract Now!', 'extract-now/' . $record->nid);
+	 }
+	 else {
+	   $info[$record->nid]['extract'] = "N/A";
+	 }
+	}
+	return $info;
 }
 
 /**
  * Function to extract a contents of a given node
  * @param nid
+ *  nid to extract
  *
  */
 function extract_now($nid) {
   $node = node_load($nid);
-  $node->format = '2';
-  $node->body .= "<br/>";
-  $node->body .= "<br/>";
-  $node->body .= "<b>Text automatically extracted from attachment below. Please download attachment to view properly formatted document.</b>";
-  $node->body .= "<br/>";
-  $node->body .= "<br/>";
-  if ($node->field_file_upload[0]) {
-    foreach($node->field_file_upload as $key->value) {
-      $file_explode = explode('files/', $key->value['filepath']);
+
+  $body .= "<br/>";
+  $body .= "<br/>";
+  $body .= variable_get('extract_content_htmlbefore', '<b>Text automatically extracted from attachment below. Please download attachment to view properly formatted document.</b>');
+  $body .= "<br/>";
+  $body .= "<br/>";
+  if ($node->field_file_upload['und'][0]) {
+    foreach ($node->field_file_upload['und'] as $key => $value) {
+	  $uploaded_file = file_load($value['fid']);
+	  $file = file_create_url($uploaded_file->uri);
+      $file_explode = explode('files/', $file);
       $file = $file_explode[1];
-      $filepath = $_SERVER['DOCUMENT_ROOT'] . base_path() . file_directory_path() . DIRECTORY_SEPARATOR . $file;
+      $files_dir = file_stream_wrapper_get_instance_by_uri('public://')->getDirectoryPath();
+      $filepath = $_SERVER['DOCUMENT_ROOT'] . base_path() . $files_dir . DIRECTORY_SEPARATOR . $file;
       $filepath = str_replace(" ", "\ ", $filepath);
-      $node->body .= "---Extracted text from " . $file . "---";
-      $node->body .= "<br/>";
-      $node->body .= shell_exec('java -jar /usr/java/jre1.7.0_02/lib/tika-app-1.0.jar -t ' . $filepath);
-      $node->body .= "<br/>";
-      $node->field_status[0]['value'] = 1;
-      $node->field_ext_save[0]['value'] = 0;
+      $body .= "---Extracted text from " . $file . "---";
+      $body .= "<br/>";
+      $body .= shell_exec(variable_get('extract_content_location', 'java -jar /Library/Java/Extensions/tika-app-1.0.jar  -t') . ' ' . $filepath);
+      $body .= "<br/>";
+      $body .= variable_get('extract_content_htmlafter', '');
+      $node->body['und'][0]['value'] = $body;
+      $node->body['und'][0]['summary'] = $body;
+      $node->body['und'][0]['format'] = 2;
+      $node->field_status['und'][0]['value'] = 1;
+      $node->field_ext_save['und'][0]['value'] = 0;
     }
     node_save($node);
     drupal_set_message($node->title . " has been extracted.");
